@@ -14,7 +14,8 @@ final class Payment extends DataObject{
 		'Gateway' => 'Varchar(50)', //this is the omnipay 'short name'
 		'Money' => 'Money', //contains Amount and Currency
 		'Status' => "Enum('Created,Authorized,Captured,Refunded,Void','Created')",
-		'Identifier' => 'Varchar'
+		'Identifier' => 'Varchar',
+		'SagePayReference' => 'Text'
 	);
 
 	private static $has_many = array(
@@ -22,7 +23,8 @@ final class Payment extends DataObject{
 	);
 
 	private static $defaults = array(
-		'Status' => 'Created'
+		'Status' => 'Created',
+		'MoneyCurrency' => 'NZD'
 	);
 
 	private static $casting = array(
@@ -33,7 +35,8 @@ final class Payment extends DataObject{
 		'Money' => 'Money',
 		'GatewayTitle' => 'Gateway',
 		'Status' => 'Status',
-		'Created.Nice' => 'Created'
+		'Created.Nice' => 'Created',
+		'SagePayReference' => 'SagePayReference'
 	);
 
 	private static $indexes = array(
@@ -45,7 +48,8 @@ final class Payment extends DataObject{
 	public function getCMSFields() {
 		$fields = new FieldList(
 			TextField::create("MoneyValue", _t("Payment.MONEY", "Money"), $this->dbObject('Money')->Nice()),
-			TextField::create("GatewayTitle", _t("Payment.GATEWAY", "Gateway"))
+			TextField::create("GatewayTitle", _t("Payment.GATEWAY", "Gateway")),
+			TextField::create("SagePayReference", "SagePayReference")
 		);
 		$fields = $fields->makeReadonly();
 		$fields->push(
@@ -70,8 +74,6 @@ final class Payment extends DataObject{
 			GatewayInfo::get_supported_gateways()
 		)->setHasEmptyDefault(true), 'Status');
 		$fields->fieldByName('Status')->setHasEmptyDefault(true);
-		
-		$context->addFilter(new PartialMatchFilter('Gateway'));
 
 		return $context;
 	}
@@ -83,10 +85,13 @@ final class Payment extends DataObject{
 	 * @param  string $currency the currency to set
 	 * @return  Payment this object for chaining
 	 */
-	public function init($gateway, $amount, $currency) {
+	public function init($gateway, $amount, $currency = null) {
 		$this->setGateway($gateway);
 		$this->setAmount($amount);
-		$this->setCurrency($currency);
+		if($currency){
+			$this->setCurrency($currency);
+		}
+
 		return $this;
 	}
 
@@ -154,6 +159,15 @@ final class Payment extends DataObject{
 		}
 
 		return $this;
+	}
+
+	/**
+	 * Get messages applicible to the user.
+	 * @return DataList messages
+	 */
+	public function getUserMessages() {
+		return $this->Messages()
+				->filter("Message:not", "");
 	}
 
 	/**
