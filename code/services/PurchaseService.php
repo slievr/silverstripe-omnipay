@@ -4,6 +4,21 @@ use Omnipay\Common\CreditCard;
 
 class PurchaseService extends PaymentService{
 
+	protected $manualpurchasestatus = "Authorized";
+
+	/**
+	 * For manual payments, choose if the payment
+	 * will become "Authorized" or "Captured" upon
+	 * purchase.
+	 *
+	 * Note: using "Authorized" as the 
+	 */
+	public function setManualPurchaseStatus($status) {
+		$this->manualpurchasestatus = $status;
+
+		return $this;
+	}
+
 	/**
 	 * Attempt to make a payment.
 	 * 
@@ -37,12 +52,15 @@ class PurchaseService extends PaymentService{
 			//set all gateway return/cancel/notify urls to PaymentGatewayController endpoint
 			'returnUrl' => $this->getEndpointURL("complete", $this->payment->Identifier),
 			'cancelUrl' => $this->getEndpointURL("cancel", $this->payment->Identifier),
-			'notifyUrl' => $this->getEndpointURL("notify", $this->payment->Identifier)
+			'notifyUrl' => $this->getEndpointURL("notify", $this->payment->Identifier),
+			'Description' => 'Online Order'
 		));
 		
-		if(!isset($gatewaydata['transactionId'])){
+		Debug::log(var_export($gatewaydata, true));
+
+		//if(!isset($gatewaydata['transactionId'])){
 			$gatewaydata['transactionId'] = $this->payment->Identifier;
-		}
+		//}
 
 		$request = $this->oGateway()->purchase($gatewaydata);
 
@@ -52,15 +70,34 @@ class PurchaseService extends PaymentService{
 		$message->write();
 
 		$gatewayresponse = $this->createGatewayResponse();
+
+
 		try {
 			$response = $this->response = $request->send();
+			
 			$gatewayresponse->setOmnipayResponse($response);
+
+			$response_data = $response->getData();
+
+			//SAGEPAY SPECIFIC :[
+
+			$this->payment->SagePayReference = json_encode(array(
+				"VPSTxId" => $response_data['VPSTxId'],
+				"VendorTxCode" => $this->payment->Identifier,
+				"SecurityKey" => $response_data['SecurityKey']
+			));
+
+			$this->payment->write();
+
 			//update payment model
-			if (GatewayInfo::is_manual($this->payment->Gateway)) {
-				//initiate manual payment
+			if ($this->manualpurchasestatus == "Authorized" &&
+				GatewayInfo::is_manual($this->payment->Gateway)
+			) {
+				//initiate 'authorized' manual payment
 				$this->createMessage('AuthorizedResponse', $response);
 				$this->payment->Status = 'Authorized';
 				$this->payment->write();
+
 				$gatewayresponse->setMessage("Manual payment authorised");
 			} elseif ($response->isSuccessful()) {
 				//successful payment
@@ -86,6 +123,7 @@ class PurchaseService extends PaymentService{
 			$this->createMessage('PurchaseError', $e);
 			$gatewayresponse->setMessage($e->getMessage());
 		}
+
 		$gatewayresponse->setRedirectURL($this->getRedirectURL());
 
 		return $gatewayresponse;
@@ -104,29 +142,36 @@ class PurchaseService extends PaymentService{
 			$data['clientIp'] = Controller::curr()->getRequest()->getIP();
 		}
 
+		//SAGEPAY SPECIFIC CRAP
+		$reference = $this->payment->SagePayReference;
+
 		$gatewaydata = array_merge($data, array(
 			'amount' => (float) $this->payment->MoneyAmount,
-			'currency' => $this->payment->MoneyCurrency
+			'currency' => $this->payment->MoneyCurrency,
+			'transactionId' => $this->payment->Identifier,
+			'transactionReference' => $reference
 		));
-
-		$this->payment->extend('onBeforeCompletePurchase', $gatewaydata);
 
 		$request = $this->oGateway()->completePurchase($gatewaydata);
 		$this->createMessage('CompletePurchaseRequest', $request);
 		$response = null;
 		try {
 			$response = $this->response = $request->send();
+
 			$gatewayresponse->setOmnipayResponse($response);
 			if ($response->isSuccessful()) {
 				$this->createMessage('PurchasedResponse', $response);
 				$this->payment->Status = 'Captured';
 				$this->payment->write();
 				$this->payment->extend('onCaptured', $gatewayresponse);
+
+				$response->confirm($this->getEndpointURL("complete", $this->payment->Identifier));
 			} else {
 				$this->createMessage('CompletePurchaseError', $response);
 			}
+
 		} catch (Omnipay\Common\Exception\OmnipayException $e) {
-			$this->createMessage("CompletePurchaseError", $e);
+			$this->createMessage("CompletePurchaseError", $e); 
 		}
 
 		return $gatewayresponse;
