@@ -58,9 +58,9 @@ class PurchaseService extends PaymentService{
 		
 		Debug::log(var_export($gatewaydata, true));
 
-		//if(!isset($gatewaydata['transactionId'])){
+		if(!isset($gatewaydata['transactionId'])){
 			$gatewaydata['transactionId'] = $this->payment->Identifier;
-		//}
+		}
 
 		$request = $this->oGateway()->purchase($gatewaydata);
 
